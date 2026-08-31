@@ -1,6 +1,7 @@
 (() => {
   const PANEL_ID = "job-copilot-panel";
   const fieldMap = new Map();
+  const { resolveSelectOptions } = globalThis.JobOptionResolver;
 
   function visible(element) { const style = getComputedStyle(element); const box = element.getBoundingClientRect(); return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0 && !element.disabled && !element.readOnly; }
   function fieldText(element) {
@@ -27,16 +28,56 @@
     setter ? setter.call(element, value) : element.value = value;
     element.dispatchEvent(new Event("input", { bubbles: true })); element.dispatchEvent(new Event("change", { bubbles: true }));
   }
-  function selectValue(element, value) {
-    const option = [...element.options].find(item => normalize(item.textContent).toLowerCase() === normalize(value).toLowerCase() || normalize(item.value).toLowerCase() === normalize(value).toLowerCase());
-    if (option) setNativeValue(element, option.value);
-  }
+  function selectValue(element, value) { const option = [...element.options].find(item => item.value === value); if (!option) return false; setNativeValue(element, option.value); return true; }
+  function selectOptions(element) { return [...element.options].map(option => ({ value: option.value, label: option.textContent.trim(), disabled: option.disabled })); }
   function pageContext() {
     const selectors = ["[class*=description]", "[id*=description]", "main", "article"];
     for (const selector of selectors) { const text = document.querySelector(selector)?.innerText?.trim(); if (text?.length > 200) return text.slice(0, 12000); }
     return document.body.innerText.slice(0, 12000);
   }
+  function firstText(selectors) {
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      const text = element?.innerText?.trim() || element?.getAttribute?.("content")?.trim();
+      if (text) return text.replace(/\s+/g, " ").slice(0, 180);
+    }
+    return "";
+  }
+  function detectedJob() {
+    return {
+      title: firstText(["[data-qa*=job-title]", "[data-testid*=job-title]", "[class*=job-title]", "h1", "meta[property='og:title']"]),
+      company: firstText(["[data-qa*=company]", "[data-testid*=company]", "[class*=company-name]", "[class*=companyName]", "[itemprop='hiringOrganization']"]),
+      description: pageContext(), link: location.href
+    };
+  }
   function make(tag, attributes = {}, text = "") { const element = document.createElement(tag); Object.entries(attributes).forEach(([key, value]) => key === "class" ? element.className = value : element.setAttribute(key, value)); element.textContent = text; return element; }
+  async function addTracker(panel) {
+    const job = detectedJob();
+    const section = make("div", { class: "jac-tracker" });
+    section.append(make("strong", {}, "Application tracker"));
+    section.append(make("p", { class: "jac-note" }, "Confirm the detected job details before saving."));
+    const company = make("input", { type: "text", placeholder: "Company name", "aria-label": "Company name" }); company.value = job.company; section.append(company);
+    const title = make("input", { type: "text", placeholder: "Position title", "aria-label": "Position title" }); title.value = job.title; section.append(title);
+    const state = make("p", { class: "jac-tracker-state" }); section.append(state);
+    const actions = make("div", { class: "jac-tracker-actions" }); section.append(actions);
+    const lookup = await chrome.runtime.sendMessage({ type: "TRACK_JOB_LOOKUP", job });
+    if (lookup.error) state.textContent = "Enter the company and position title to start tracking this application.";
+    function show(application) { state.textContent = application ? `Saved as ${application.status.replace("_", " ")} on ${new Date(application.updatedAt).toLocaleDateString()}.` : "Not yet saved to your application history."; }
+    async function save(status) {
+      job.company = company.value;
+      job.title = title.value;
+      actions.querySelectorAll("button").forEach(button => button.disabled = true);
+      const result = await chrome.runtime.sendMessage({ type: "SAVE_APPLICATION", job, status });
+      actions.querySelectorAll("button").forEach(button => button.disabled = false);
+      state.textContent = result.error || "";
+      if (result.application) show(result.application);
+    }
+    [["draft", "Save draft"], ["in_progress", "Mark in progress"], ["applied", "Mark as applied"]].forEach(([status, label]) => {
+      const button = make("button", { type: "button", class: status === "applied" ? "" : "jac-secondary" }, label);
+      button.onclick = () => save(status); actions.append(button);
+    });
+    if (!lookup.error) show(lookup.application); panel.append(section);
+  }
   async function scan() {
     document.getElementById(PANEL_ID)?.remove(); fieldMap.clear();
     const response = await chrome.runtime.sendMessage({ type: "GET_FACTS" });
@@ -45,6 +86,7 @@
     const header = make("div", { class: "jac-header" }); header.append(make("strong", {}, "Application Copilot"));
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
     panel.append(make("p", { class: "jac-note" }, "Review each value. Nothing is submitted automatically."));
+    await addTracker(panel);
     const fields = [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible);
     let count = 0;
     fields.forEach((field, index) => {
@@ -54,9 +96,26 @@
       if (!value && !isUnknownLongForm) return;
       const id = `jac-${index}`; fieldMap.set(id, field); count++;
       const row = make("div", { class: "jac-row" }); row.append(make("label", {}, text.slice(0, 100)));
-      const editor = make("textarea", { "data-field-id": id, rows: value?.length > 100 ? "3" : "2" }); editor.value = value || ""; row.append(editor);
+      let editor;
+      let optionResult;
+      if (field instanceof HTMLSelectElement) {
+        optionResult = resolveSelectOptions({ field: key, value, options: selectOptions(field), aliases: response.facts.option_aliases || [] });
+        editor = make("select", { "data-field-id": id, class: "jac-option-editor" });
+        const placeholder = make("option", { value: "" }, optionResult.selected ? "Matched site option" : optionResult.candidates.length ? "Choose a suggested option" : "No matching site option");
+        placeholder.disabled = true; editor.append(placeholder);
+        const shownOptions = optionResult.selected ? [optionResult.selected] : optionResult.candidates;
+        shownOptions.forEach(option => editor.append(make("option", { value: option.value }, option.label)));
+        editor.value = optionResult.selected?.value || "";
+        const note = optionResult.selected ? `Matched: ${optionResult.selected.label}` : optionResult.candidates.length ? "More than one possible option was found. Choose one before filling." : `No option matched saved value: ${value}`;
+        row.append(make("p", { class: "jac-option-note" }, note));
+      } else { editor = make("textarea", { "data-field-id": id, rows: value?.length > 100 ? "3" : "2" }); editor.value = value || ""; }
+      row.append(editor);
       if (isUnknownLongForm) { const generate = make("button", { type: "button", class: "jac-secondary" }, "Generate grounded draft"); generate.onclick = async () => { generate.disabled = true; generate.textContent = "Drafting…"; const result = await chrome.runtime.sendMessage({ type: "GENERATE", question: text, jobContext: pageContext() }); generate.disabled = false; generate.textContent = "Generate grounded draft"; if (result.error) alert(result.error); else editor.value = result.answer; }; row.append(generate); }
-      const fill = make("button", { type: "button" }, "Fill this field"); fill.onclick = () => { field instanceof HTMLSelectElement ? selectValue(field, editor.value) : setNativeValue(field, editor.value); field.scrollIntoView({ behavior: "smooth", block: "center" }); }; row.append(fill); panel.append(row);
+      const fill = make("button", { type: "button" }, "Fill this field"); fill.onclick = () => {
+        const filled = field instanceof HTMLSelectElement ? selectValue(field, editor.value) : (setNativeValue(field, editor.value), true);
+        if (!filled) { const note = row.querySelector(".jac-option-note"); if (note) note.textContent = "Choose a suggested site option before filling."; return; }
+        field.scrollIntoView({ behavior: "smooth", block: "center" });
+      }; row.append(fill); panel.append(row);
     });
     if (!count) panel.append(make("p", {}, "No safe, recognized fields were found on this page."));
     document.documentElement.append(panel);

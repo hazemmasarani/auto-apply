@@ -6,6 +6,7 @@ export const EMPTY_PROFILE = {
   education: [{ school: "", degree: "", field: "", graduationYear: "" }],
   work: [{ company: "", title: "", startDate: "", endDate: "", description: "" }],
   skills: "",
+  optionAliases: [],
   standardAnswers: { whyInterested: "", salary: "", noticePeriod: "" },
   generator: { endpoint: "https://api.openai.com/v1/chat/completions", model: "", apiKey: "" }
 };
@@ -19,6 +20,7 @@ export function mergeProfile(value = {}) {
     preferences: { ...EMPTY_PROFILE.preferences, ...value.preferences },
     standardAnswers: { ...EMPTY_PROFILE.standardAnswers, ...value.standardAnswers },
     generator: { ...EMPTY_PROFILE.generator, ...value.generator },
+    optionAliases: Array.isArray(value.optionAliases) ? value.optionAliases.filter(alias => alias && typeof alias.field === "string" && typeof alias.source === "string" && typeof alias.target === "string") : [],
     education: value.education?.length ? value.education : structuredClone(EMPTY_PROFILE.education),
     work: value.work?.length ? value.work : structuredClone(EMPTY_PROFILE.work)
   };
@@ -39,6 +41,7 @@ export function flattenedFacts(profile) {
     graduation_year: p.education[0]?.graduationYear || "", employer: p.work[0]?.company || "",
     job_title: p.work[0]?.title || "", skills: p.skills,
     salary: p.standardAnswers.salary, notice_period: p.standardAnswers.noticePeriod,
-    why_interested: p.standardAnswers.whyInterested
+    why_interested: p.standardAnswers.whyInterested,
+    option_aliases: p.optionAliases
   };
 }

@@ -13,8 +13,11 @@ answer legal/self-identification questions without review.
 - Contact, education, employment, skills, links, preferences, authorization,
   and reusable standard answers
 - Field matching by labels, names, placeholders, ARIA text, and nearby text
+- Option-aware dropdown matching for country/state aliases and saved custom aliases
 - A per-page review panel showing proposed values before they are filled
 - Optional OpenAI-compatible answer generation with a strict grounding prompt
+- Encrypted application tracker with draft, in-progress, and applied statuses
+- Duplicate detection based on the company, position title, and opening lines of the job description
 - No server, analytics, or third-party dependencies
 
 ## Install
@@ -26,7 +29,23 @@ answer legal/self-identification questions without review.
 5. On an application page, open the extension and choose **Review fields**.
 
 The passphrase is never stored. Your profile and optional API key are encrypted
-in `chrome.storage.local`; unlocking lasts only for the current browser session.
+before being stored; unlocking lasts only for the current browser session.
+
+## Application tracking and browser sync
+
+When you review a job page, the panel can save it as a draft, in progress, or
+applied. The extension fingerprints a job with a SHA-256 hash of its company,
+title, and the first five non-empty lines of the detected description. Saving a
+job with the same fingerprint updates the existing record instead of adding a
+duplicate. Each record contains the company, title, application URL, status,
+and timestamps.
+
+Application history and an encrypted copy of your profile are stored in
+`chrome.storage.sync`. They are available on browsers signed in to the same
+browser-sync account after you unlock the extension with the same passphrase.
+Browser sync has storage quotas, so it is appropriate for a personal
+job-application history, not an unlimited archive. It does not share data with
+a different browser account.
 
 ## Answer generation
 
@@ -36,6 +55,24 @@ profile to that endpoint. Generated text is always shown for review and is never
 inserted or submitted silently.
 
 If no endpoint is configured, unknown questions remain blank for manual review.
+
+## Dropdown aliases
+
+For dropdowns, the review panel compares the saved value with the site's actual
+option labels and values. It recognizes common country and US-state aliases, so
+`USA` can match a site option such as `+1 United States`. The match is shown in
+the panel and is only filled when you click the field's fill button.
+
+For site-specific wording, add a custom alias in the profile editor using:
+
+```text
+field | saved value | site option label
+country | USA | +1 United States
+```
+
+Use `*` as the field only when a mapping is deliberately safe for every
+dropdown. If several options match, the extension shows the choices and does
+not select one for you.
 
 ## Development
 

@@ -1,8 +1,22 @@
-import { unlockProfile, getUnlockedProfile, lockProfile } from "./storage.js";
+import { unlockProfile, getUnlockedProfile, lockProfile, getApplication, listApplications, saveApplication, setApplicationStatus } from "./storage.js";
 import { flattenedFacts } from "./profile.js";
 
 function publicProfile(profile) {
   const copy = structuredClone(profile); copy.generator.apiKey = ""; return copy;
+}
+
+function normalized(value) { return String(value || "").replace(/\s+/g, " ").trim().toLowerCase(); }
+function jobDescriptionSample(value) { return String(value || "").split(/\n+/).map(line => normalized(line)).filter(Boolean).slice(0, 5).join(" ").slice(0, 2000); }
+function applicationUrl(value) {
+  try { const url = new URL(value); url.hash = ""; [...url.searchParams.keys()].filter(key => /^utm_/i.test(key)).forEach(key => url.searchParams.delete(key)); return url.href; }
+  catch { return String(value || ""); }
+}
+async function fingerprintJob(job) {
+  const company = normalized(job.company), title = normalized(job.title), description = jobDescriptionSample(job.description);
+  if (!company || !title || !description) throw new Error("Could not identify the company, position title, and job description on this page.");
+  const value = `${company}\n${title}\n${description}`;
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return { hash: [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join(""), company: String(job.company || "").trim(), title: String(job.title || "").trim(), link: applicationUrl(job.link) };
 }
 
 async function generateAnswer(profile, question, jobContext) {
@@ -34,6 +48,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!profile) return { error: "Unlock your profile from the extension first." };
     if (message.type === "GET_FACTS") return { facts: flattenedFacts(profile) };
     if (message.type === "GENERATE") { try { return { answer: await generateAnswer(profile, message.question, message.jobContext) }; } catch (error) { return { error: error.message }; } }
+    if (message.type === "TRACK_JOB_LOOKUP") { try { const job = await fingerprintJob(message.job); return { job, application: await getApplication(job.hash) }; } catch (error) { return { error: error.message }; } }
+    if (message.type === "SAVE_APPLICATION") { try { const job = await fingerprintJob(message.job); return { application: await saveApplication({ ...job, status: message.status }) }; } catch (error) { return { error: error.message }; } }
+    if (message.type === "GET_APPLICATIONS") { try { return { applications: await listApplications() }; } catch (error) { return { error: error.message }; } }
+    if (message.type === "SET_APPLICATION_STATUS") { try { return { application: await setApplicationStatus(message.hash, message.status) }; } catch (error) { return { error: error.message }; } }
     return { error: "Unknown request." };
   })().then(sendResponse);
   return true;

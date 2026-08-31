@@ -4,6 +4,7 @@ async function refresh() { const { unlocked } = await request("STATUS"); documen
 document.querySelector("#unlock").addEventListener("click", async () => { const result = await request("UNLOCK", { passphrase: document.querySelector("#passphrase").value }); status.textContent = result.error || ""; await refresh(); });
 document.querySelector("#lock").addEventListener("click", async () => { await request("LOCK"); await refresh(); });
 document.querySelector("#settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
+document.querySelector("#history").addEventListener("click", () => chrome.runtime.openOptionsPage());
 document.querySelector("#review").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   try { await chrome.tabs.sendMessage(tab.id, { type: "SCAN" }); window.close(); }
