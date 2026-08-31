@@ -25,6 +25,7 @@
     return clean;
   }
   function matchingOptions(options, target) { const normalized = normalizeOptionText(target); return unique(options.filter(option => optionForms(option).includes(normalized) || optionForms(option).includes(withoutCallingCode(target)))); }
+  function shouldAutoFill({ value, hasExistingValue, isProtected = false }) { return Boolean(String(value || "").trim()) && !hasExistingValue && !isProtected; }
 
   function resolveSelectOptions({ field, value, options, aliases = [] }) {
     const available = options.filter(option => !option.disabled && String(option.value || "").trim());
@@ -32,20 +33,20 @@
     if (!raw) return { selected: null, candidates: [], reason: "empty" };
     const exact = matchingOptions(available, value);
     if (exact.length === 1) return { selected: exact[0], candidates: exact, reason: "exact" };
-    if (exact.length > 1) return { selected: null, candidates: exact, reason: "ambiguous" };
+    if (exact.length > 1) return { selected: exact[0], candidates: exact, reason: "best" };
 
     const applicableAliases = aliases.filter(alias => (alias.field === field || alias.field === "*") && normalizeOptionText(alias.source) === raw);
     const aliasesForField = applicableAliases.filter(alias => alias.field === field);
     const aliasMatches = (aliasesForField.length ? aliasesForField : applicableAliases).flatMap(alias => matchingOptions(available, alias.target));
     const custom = unique(aliasMatches);
     if (custom.length === 1) return { selected: custom[0], candidates: custom, reason: "custom" };
-    if (custom.length > 1) return { selected: null, candidates: custom, reason: "ambiguous" };
+    if (custom.length > 1) return { selected: custom[0], candidates: custom, reason: "best" };
 
     if (field === "country" || field === "state") {
       const target = canonical(field, value);
       const semantic = unique(available.filter(option => optionForms(option).some(form => canonical(field, form) === target)));
       if (semantic.length === 1) return { selected: semantic[0], candidates: semantic, reason: "alias" };
-      if (semantic.length > 1) return { selected: null, candidates: semantic, reason: "ambiguous" };
+      if (semantic.length > 1) return { selected: semantic[0], candidates: semantic, reason: "best" };
     }
     return { selected: null, candidates: [], reason: "none" };
   }
@@ -68,5 +69,5 @@
   }
   function formatOptionAliases(aliases = []) { return aliases.map(alias => `${alias.field} | ${alias.source} | ${alias.target}`).join("\n"); }
 
-  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions };
+  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions, shouldAutoFill };
 })();

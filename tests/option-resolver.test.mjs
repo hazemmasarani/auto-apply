@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import "../src/option-resolver.js";
 
-const { parseOptionAliases, resolveSelectOptions } = globalThis.JobOptionResolver;
+const { parseOptionAliases, resolveSelectOptions, shouldAutoFill } = globalThis.JobOptionResolver;
 const countries = [
   { value: "", label: "Select a country", disabled: false },
   { value: "US", label: "+1 United States", disabled: false },
@@ -31,14 +31,21 @@ test("uses a field-specific custom alias before a global alias", () => {
   assert.equal(result.reason, "custom");
 });
 
-test("does not select an ambiguous custom alias", () => {
+test("selects the first best custom-alias suggestion", () => {
   const result = resolveSelectOptions({
     field: "country", value: "north america", options: countries,
     aliases: [{ field: "country", source: "north america", target: "+1 United States" }, { field: "country", source: "north america", target: "+1 Canada" }]
   });
-  assert.equal(result.selected, null);
+  assert.equal(result.selected.value, "US");
   assert.equal(result.candidates.length, 2);
-  assert.equal(result.reason, "ambiguous");
+  assert.equal(result.reason, "best");
+});
+
+test("only auto-fills saved values into empty, unprotected fields", () => {
+  assert.equal(shouldAutoFill({ value: "Ada", hasExistingValue: false }), true);
+  assert.equal(shouldAutoFill({ value: "Ada", hasExistingValue: true }), false);
+  assert.equal(shouldAutoFill({ value: "", hasExistingValue: false }), false);
+  assert.equal(shouldAutoFill({ value: "Ada", hasExistingValue: false, isProtected: true }), false);
 });
 
 test("validates duplicate and malformed aliases", () => {

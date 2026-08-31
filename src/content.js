@@ -1,7 +1,7 @@
 (() => {
   const PANEL_ID = "job-copilot-panel";
   const fieldMap = new Map();
-  const { resolveSelectOptions } = globalThis.JobOptionResolver;
+  const { resolveSelectOptions, shouldAutoFill } = globalThis.JobOptionResolver;
 
   function visible(element) { const style = getComputedStyle(element); const box = element.getBoundingClientRect(); return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0 && !element.disabled && !element.readOnly; }
   function fieldText(element) {
@@ -30,6 +30,10 @@
   }
   function selectValue(element, value) { const option = [...element.options].find(item => item.value === value); if (!option) return false; setNativeValue(element, option.value); return true; }
   function selectOptions(element) { return [...element.options].map(option => ({ value: option.value, label: option.textContent.trim(), disabled: option.disabled })); }
+  function hasExistingValue(element) {
+    if (element instanceof HTMLSelectElement) return Boolean(element.value) && !element.selectedOptions[0]?.disabled;
+    return Boolean(String(element.value || "").trim());
+  }
   function pageContext() {
     const selectors = ["[class*=description]", "[id*=description]", "main", "article"];
     for (const selector of selectors) { const text = document.querySelector(selector)?.innerText?.trim(); if (text?.length > 200) return text.slice(0, 12000); }
@@ -85,12 +89,13 @@
     const panel = make("aside", { id: PANEL_ID });
     const header = make("div", { class: "jac-header" }); header.append(make("strong", {}, "Application Copilot"));
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
-    panel.append(make("p", { class: "jac-note" }, "Review each value. Nothing is submitted automatically."));
+    panel.append(make("p", { class: "jac-note" }, "Recognized safe empty fields are filled automatically. Nothing is submitted automatically."));
     await addTracker(panel);
     const fields = [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible);
     let count = 0;
     fields.forEach((field, index) => {
       const text = fieldText(field); if (!text || sensitive.test(text)) return;
+      if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) return;
       const key = match(text); const value = key ? response.facts[key] : "";
       const isUnknownLongForm = !key && field instanceof HTMLTextAreaElement;
       if (!value && !isUnknownLongForm) return;
@@ -98,22 +103,31 @@
       const row = make("div", { class: "jac-row" }); row.append(make("label", {}, text.slice(0, 100)));
       let editor;
       let optionResult;
+      let autoFilled = false;
+      const canAutoFill = shouldAutoFill({ value, hasExistingValue: hasExistingValue(field) });
       if (field instanceof HTMLSelectElement) {
         optionResult = resolveSelectOptions({ field: key, value, options: selectOptions(field), aliases: response.facts.option_aliases || [] });
         editor = make("select", { "data-field-id": id, class: "jac-option-editor" });
         const placeholder = make("option", { value: "" }, optionResult.selected ? "Matched site option" : optionResult.candidates.length ? "Choose a suggested option" : "No matching site option");
         placeholder.disabled = true; editor.append(placeholder);
-        const shownOptions = optionResult.selected ? [optionResult.selected] : optionResult.candidates;
+        const shownOptions = optionResult.candidates;
         shownOptions.forEach(option => editor.append(make("option", { value: option.value }, option.label)));
         editor.value = optionResult.selected?.value || "";
-        const note = optionResult.selected ? `Matched: ${optionResult.selected.label}` : optionResult.candidates.length ? "More than one possible option was found. Choose one before filling." : `No option matched saved value: ${value}`;
+        if (canAutoFill && optionResult.selected) autoFilled = selectValue(field, optionResult.selected.value);
+        const note = optionResult.selected ? `Matched: ${optionResult.selected.label}` : `No option matched saved value: ${value}`;
         row.append(make("p", { class: "jac-option-note" }, note));
-      } else { editor = make("textarea", { "data-field-id": id, rows: value?.length > 100 ? "3" : "2" }); editor.value = value || ""; }
+      } else {
+        editor = make("textarea", { "data-field-id": id, rows: value?.length > 100 ? "3" : "2" }); editor.value = value || "";
+        if (canAutoFill && !isUnknownLongForm) { setNativeValue(field, value); autoFilled = true; }
+      }
+      const fillState = make("p", { class: "jac-fill-state" }, autoFilled ? "Filled automatically." : hasExistingValue(field) && !autoFilled ? "Existing page value kept." : "Not filled automatically.");
+      row.append(fillState);
       row.append(editor);
       if (isUnknownLongForm) { const generate = make("button", { type: "button", class: "jac-secondary" }, "Generate grounded draft"); generate.onclick = async () => { generate.disabled = true; generate.textContent = "Drafting…"; const result = await chrome.runtime.sendMessage({ type: "GENERATE", question: text, jobContext: pageContext() }); generate.disabled = false; generate.textContent = "Generate grounded draft"; if (result.error) alert(result.error); else editor.value = result.answer; }; row.append(generate); }
       const fill = make("button", { type: "button" }, "Fill this field"); fill.onclick = () => {
         const filled = field instanceof HTMLSelectElement ? selectValue(field, editor.value) : (setNativeValue(field, editor.value), true);
         if (!filled) { const note = row.querySelector(".jac-option-note"); if (note) note.textContent = "Choose a suggested site option before filling."; return; }
+        fillState.textContent = "Filled from sidebar.";
         field.scrollIntoView({ behavior: "smooth", block: "center" });
       }; row.append(fill); panel.append(row);
     });

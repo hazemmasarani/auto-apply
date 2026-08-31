@@ -15,6 +15,7 @@ answer legal/self-identification questions without review.
 - Field matching by labels, names, placeholders, ARIA text, and nearby text
 - Option-aware dropdown matching for country/state aliases and saved custom aliases
 - A per-page review panel showing proposed values before they are filled
+- Automatic initial filling of recognized empty fields, with sidebar controls for edits
 - Optional OpenAI-compatible answer generation with a strict grounding prompt
 - Encrypted application tracker with draft, in-progress, and applied statuses
 - Duplicate detection based on the company, position title, and opening lines of the job description
@@ -71,8 +72,17 @@ country | USA | +1 United States
 ```
 
 Use `*` as the field only when a mapping is deliberately safe for every
-dropdown. If several options match, the extension shows the choices and does
-not select one for you.
+dropdown. If several options match, the extension uses the highest-ranked site
+option and keeps that selection visible in the sidebar for review.
+
+## Automatic field filling
+
+When you choose **Review fields**, the extension fills recognized empty fields
+from your profile immediately. Existing values on the application page are kept
+unchanged. Use the sidebar to edit a proposed value, then click that row's
+**Fill this field** button to apply your edit. The extension still never
+submits forms and leaves identity documents, financial data, attestations,
+demographic questions, signatures, and CAPTCHAs alone.
 
 ## Development
 
