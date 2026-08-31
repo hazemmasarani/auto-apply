@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import "../src/option-resolver.js";
 
-const { parseOptionAliases, resolveSelectOptions, shouldAutoFill } = globalThis.JobOptionResolver;
+const { parseOptionAliases, resolveSelectOptions, shouldAutoFill, rankedOptions } = globalThis.JobOptionResolver;
 const countries = [
   { value: "", label: "Select a country", disabled: false },
   { value: "US", label: "+1 United States", disabled: false },
@@ -20,6 +20,26 @@ test("prefers an exact option value", () => {
   const result = resolveSelectOptions({ field: "country", value: "CA", options: countries });
   assert.equal(result.selected.value, "CA");
   assert.equal(result.reason, "exact");
+});
+
+test("matches a compacted school name in a dropdown", () => {
+  const result = resolveSelectOptions({
+    field: "school", value: "Stony Brook University",
+    options: [{ value: "sbu", label: "Stonybrook University", disabled: false }]
+  });
+  assert.equal(result.selected.value, "sbu");
+  assert.equal(result.reason, "exact");
+});
+
+test("uses a phrase regular expression for city options and preserves site order on ties", () => {
+  const options = [
+    { value: "city", label: "Stony Brook City", disabled: false },
+    { value: "university", label: "Stony Brook University", disabled: false }
+  ];
+  const result = resolveSelectOptions({ field: "city", value: "Stony Brook", options });
+  assert.equal(result.selected.value, "city");
+  assert.deepEqual(rankedOptions(options, "Stony Brook").map(option => option.value), ["city", "university"]);
+  assert.equal(result.reason, "regex");
 });
 
 test("uses a field-specific custom alias before a global alias", () => {

@@ -34,6 +34,54 @@
     if (element instanceof HTMLSelectElement) return Boolean(element.value) && !element.selectedOptions[0]?.disabled;
     return Boolean(String(element.value || "").trim());
   }
+  function setInputValue(element, value) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter ? setter.call(element, value) : element.value = value;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  function autocompleteEnabled(field, key) {
+    return field instanceof HTMLInputElement && (field.getAttribute("role") === "combobox" || field.hasAttribute("aria-autocomplete") || field.hasAttribute("aria-controls") || field.hasAttribute("aria-owns") || field.hasAttribute("aria-haspopup") || ["school", "city", "state", "country"].includes(key));
+  }
+  function suggestionElements(field) {
+    const ids = [field.getAttribute("aria-controls"), field.getAttribute("aria-owns")].filter(Boolean).flatMap(value => value.split(/\s+/));
+    const linked = ids.map(id => document.getElementById(id)).filter(Boolean);
+    const roots = linked.length ? linked : [...document.querySelectorAll("[role=listbox], [role=menu]")];
+    const elements = roots.flatMap(root => [...root.querySelectorAll("[role=option], [role=menuitem], li")]);
+    return elements.filter(element => !element.closest(`#${PANEL_ID}`) && visible(element) && (element.innerText || element.textContent).trim());
+  }
+  function suggestionOptions(field) {
+    return suggestionElements(field).map((element, index) => ({
+      value: element.getAttribute("data-value") || element.getAttribute("value") || `${index}:${element.innerText.trim()}`,
+      label: element.innerText.trim(), disabled: element.getAttribute("aria-disabled") === "true", element
+    }));
+  }
+  function waitForSuggestions(field, timeout = 900) {
+    const available = suggestionOptions(field); if (available.length) return Promise.resolve(available);
+    return new Promise(resolve => {
+      const observer = new MutationObserver(() => { const options = suggestionOptions(field); if (options.length) { observer.disconnect(); clearTimeout(timer); resolve(options); } });
+      const timer = setTimeout(() => { observer.disconnect(); resolve(suggestionOptions(field)); }, timeout);
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded", "style", "class"] });
+    });
+  }
+  function activateSuggestion(option) {
+    const eventNames = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
+    eventNames.forEach(type => option.element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })));
+  }
+  async function applyValue(field, key, value, aliases) {
+    if (field instanceof HTMLSelectElement) {
+      const result = resolveSelectOptions({ field: key, value, options: selectOptions(field), aliases });
+      return { filled: Boolean(result.selected && selectValue(field, result.selected.value)), result };
+    }
+    if (!(field instanceof HTMLInputElement) || !autocompleteEnabled(field, key)) { setNativeValue(field, value); return { filled: true, result: null }; }
+    field.focus();
+    setInputValue(field, value);
+    const options = await waitForSuggestions(field);
+    if (!options.length) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result: null }; }
+    const result = resolveSelectOptions({ field: key, value, options, aliases });
+    if (!result.selected) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result }; }
+    activateSuggestion(result.selected);
+    return { filled: true, result };
+  }
   function pageContext() {
     const selectors = ["[class*=description]", "[id*=description]", "main", "article"];
     for (const selector of selectors) { const text = document.querySelector(selector)?.innerText?.trim(); if (text?.length > 200) return text.slice(0, 12000); }
@@ -93,16 +141,16 @@
     await addTracker(panel);
     const fields = [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible);
     let count = 0;
-    fields.forEach((field, index) => {
-      const text = fieldText(field); if (!text || sensitive.test(text)) return;
-      if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) return;
+    for (const [index, field] of fields.entries()) {
+      const text = fieldText(field); if (!text || sensitive.test(text)) continue;
+      if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) continue;
       const key = match(text); const value = key ? response.facts[key] : "";
       const isUnknownLongForm = !key && field instanceof HTMLTextAreaElement;
-      if (!value && !isUnknownLongForm) return;
+      if (!value && !isUnknownLongForm) continue;
       const id = `jac-${index}`; fieldMap.set(id, field); count++;
       const row = make("div", { class: "jac-row" }); row.append(make("label", {}, text.slice(0, 100)));
       let editor;
-      let optionResult;
+      let optionResult = null;
       let autoFilled = false;
       const canAutoFill = shouldAutoFill({ value, hasExistingValue: hasExistingValue(field) });
       if (field instanceof HTMLSelectElement) {
@@ -118,19 +166,27 @@
         row.append(make("p", { class: "jac-option-note" }, note));
       } else {
         editor = make("textarea", { "data-field-id": id, rows: value?.length > 100 ? "3" : "2" }); editor.value = value || "";
-        if (canAutoFill && !isUnknownLongForm) { setNativeValue(field, value); autoFilled = true; }
+        if (canAutoFill && !isUnknownLongForm) {
+          const applied = await applyValue(field, key, value, response.facts.option_aliases || []);
+          autoFilled = applied.filled; optionResult = applied.result;
+          if (optionResult?.selected) { editor.value = optionResult.selected.label; row.append(make("p", { class: "jac-option-note" }, `Selected suggestion: ${optionResult.selected.label}`)); }
+          else if (autocompleteEnabled(field, key)) row.append(make("p", { class: "jac-option-note" }, "Typed saved value; no selectable suggestion was found."));
+        }
       }
       const fillState = make("p", { class: "jac-fill-state" }, autoFilled ? "Filled automatically." : hasExistingValue(field) && !autoFilled ? "Existing page value kept." : "Not filled automatically.");
       row.append(fillState);
       row.append(editor);
       if (isUnknownLongForm) { const generate = make("button", { type: "button", class: "jac-secondary" }, "Generate grounded draft"); generate.onclick = async () => { generate.disabled = true; generate.textContent = "Drafting…"; const result = await chrome.runtime.sendMessage({ type: "GENERATE", question: text, jobContext: pageContext() }); generate.disabled = false; generate.textContent = "Generate grounded draft"; if (result.error) alert(result.error); else editor.value = result.answer; }; row.append(generate); }
-      const fill = make("button", { type: "button" }, "Fill this field"); fill.onclick = () => {
-        const filled = field instanceof HTMLSelectElement ? selectValue(field, editor.value) : (setNativeValue(field, editor.value), true);
-        if (!filled) { const note = row.querySelector(".jac-option-note"); if (note) note.textContent = "Choose a suggested site option before filling."; return; }
+      const fill = make("button", { type: "button" }, "Fill this field"); fill.onclick = async () => {
+        fill.disabled = true;
+        const applied = field instanceof HTMLSelectElement ? { filled: selectValue(field, editor.value), result: null } : await applyValue(field, key, editor.value, response.facts.option_aliases || []);
+        fill.disabled = false;
+        if (!applied.filled) { const note = row.querySelector(".jac-option-note"); if (note) note.textContent = "Choose a suggested site option before filling."; return; }
+        const note = row.querySelector(".jac-option-note"); if (applied.result?.selected) { editor.value = applied.result.selected.label; if (note) note.textContent = `Selected suggestion: ${applied.result.selected.label}`; }
         fillState.textContent = "Filled from sidebar.";
         field.scrollIntoView({ behavior: "smooth", block: "center" });
       }; row.append(fill); panel.append(row);
-    });
+    }
     if (!count) panel.append(make("p", {}, "No safe, recognized fields were found on this page."));
     document.documentElement.append(panel);
   }

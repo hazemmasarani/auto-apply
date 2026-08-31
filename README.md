@@ -59,10 +59,11 @@ If no endpoint is configured, unknown questions remain blank for manual review.
 
 ## Dropdown aliases
 
-For dropdowns, the review panel compares the saved value with the site's actual
-option labels and values. It recognizes common country and US-state aliases, so
-`USA` can match a site option such as `+1 United States`. The match is shown in
-the panel and is only filled when you click the field's fill button.
+For dropdowns and autocomplete inputs, the review panel compares the saved
+value with the site's actual option labels and values. It recognizes common
+country and US-state aliases, compacted names such as `Stonybrook University`,
+and phrase matches such as `Stony Brook` → `Stony Brook City`. The extension
+uses the site's first best-ranked option and shows that selection in the panel.
 
 For site-specific wording, add a custom alias in the profile editor using:
 

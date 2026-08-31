@@ -24,20 +24,33 @@
     if (field === "state") return US_STATES.get(clean) || clean;
     return clean;
   }
-  function matchingOptions(options, target) { const normalized = normalizeOptionText(target); return unique(options.filter(option => optionForms(option).includes(normalized) || optionForms(option).includes(withoutCallingCode(target)))); }
+  function compact(value) { return normalizeOptionText(value).replace(/\s+/g, ""); }
+  function escapedWords(value) { return normalizeOptionText(value).split(" ").filter(Boolean).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")); }
+  function optionScore(option, value) {
+    const normalized = normalizeOptionText(value), condensed = compact(value), words = escapedWords(value);
+    if (!normalized || !words.length) return 0;
+    return Math.max(...optionForms(option).map(form => {
+      if (form === normalized || compact(form) === condensed) return 1000;
+      if (new RegExp(`\\b${words.join("\\s+")}\\b`).test(form)) return 800;
+      if (new RegExp(words.map(word => `\\b${word}\\b`).join("[\\s\\S]*")).test(form)) return 600;
+      return 0;
+    }));
+  }
+  function rankedOptions(options, value, bonus = 0) {
+    return options.map((option, index) => ({ option, index, score: optionScore(option, value) + bonus })).filter(match => match.score > bonus).sort((a, b) => b.score - a.score || a.index - b.index).map(match => match.option);
+  }
   function shouldAutoFill({ value, hasExistingValue, isProtected = false }) { return Boolean(String(value || "").trim()) && !hasExistingValue && !isProtected; }
 
   function resolveSelectOptions({ field, value, options, aliases = [] }) {
     const available = options.filter(option => !option.disabled && String(option.value || "").trim());
     const raw = normalizeOptionText(value);
     if (!raw) return { selected: null, candidates: [], reason: "empty" };
-    const exact = matchingOptions(available, value);
-    if (exact.length === 1) return { selected: exact[0], candidates: exact, reason: "exact" };
-    if (exact.length > 1) return { selected: exact[0], candidates: exact, reason: "best" };
+    const direct = rankedOptions(available, value);
+    if (direct.length) return { selected: direct[0], candidates: direct, reason: optionScore(direct[0], value) === 1000 ? "exact" : "regex" };
 
     const applicableAliases = aliases.filter(alias => (alias.field === field || alias.field === "*") && normalizeOptionText(alias.source) === raw);
     const aliasesForField = applicableAliases.filter(alias => alias.field === field);
-    const aliasMatches = (aliasesForField.length ? aliasesForField : applicableAliases).flatMap(alias => matchingOptions(available, alias.target));
+    const aliasMatches = (aliasesForField.length ? aliasesForField : applicableAliases).flatMap(alias => rankedOptions(available, alias.target, 2000));
     const custom = unique(aliasMatches);
     if (custom.length === 1) return { selected: custom[0], candidates: custom, reason: "custom" };
     if (custom.length > 1) return { selected: custom[0], candidates: custom, reason: "best" };
@@ -69,5 +82,5 @@
   }
   function formatOptionAliases(aliases = []) { return aliases.map(alias => `${alias.field} | ${alias.source} | ${alias.target}`).join("\n"); }
 
-  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions, shouldAutoFill };
+  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions, shouldAutoFill, rankedOptions };
 })();
