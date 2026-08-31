@@ -12,6 +12,7 @@ answer legal/self-identification questions without review.
 - AES-GCM encrypted profile storage protected by your passphrase
 - Contact, education, employment, skills, links, preferences, authorization,
   and reusable standard answers
+- Multiple education and work-experience entries, with repeatable-section filling
 - Field matching by labels, names, placeholders, ARIA text, and nearby text
 - Option-aware dropdown matching for country/state aliases and saved custom aliases
 - A per-page review panel showing proposed values before they are filled
@@ -84,6 +85,15 @@ unchanged. Use the sidebar to edit a proposed value, then click that row's
 **Fill this field** button to apply your edit. The extension still never
 submits forms and leaves identity documents, financial data, attestations,
 demographic questions, signatures, and CAPTCHAs alone.
+
+## Multiple education and work entries
+
+Use **Add education** and **Add work experience** in the profile editor to save
+each record. On an application page, the extension fills the entries in page
+order. When more records are needed, it clicks clearly labeled page controls
+such as **Add education** or **Add work experience** before filling the new
+sections. If a site uses an unlabeled generic add button, add the section
+yourself and run **Review fields** again.
 
 ## Development
 

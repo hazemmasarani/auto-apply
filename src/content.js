@@ -34,6 +34,46 @@
     if (element instanceof HTMLSelectElement) return Boolean(element.value) && !element.selectedOptions[0]?.disabled;
     return Boolean(String(element.value || "").trim());
   }
+  function matchingFields() { return [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible); }
+  function countRepeatedFields(kind) {
+    const startKey = kind === "education" ? "school" : "employer";
+    return matchingFields().filter(field => match(fieldText(field)) === startKey).length;
+  }
+  function addButton(kind) {
+    const pattern = kind === "education" ? /add\s+(another\s+)?(education|school|degree)/i : /add\s+(another\s+)?(work|experience|employment|position|job)/i;
+    return [...document.querySelectorAll("button, [role=button]")].find(button => visible(button) && pattern.test(`${button.innerText || ""} ${button.getAttribute("aria-label") || ""}`));
+  }
+  function waitForFieldCount(kind, before, timeout = 1200) {
+    if (countRepeatedFields(kind) > before) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const observer = new MutationObserver(() => { if (countRepeatedFields(kind) > before) { observer.disconnect(); clearTimeout(timer); resolve(true); } });
+      const timer = setTimeout(() => { observer.disconnect(); resolve(countRepeatedFields(kind) > before); }, timeout);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    });
+  }
+  async function expandRepeatedFields(kind, wanted) {
+    let current = countRepeatedFields(kind);
+    while (current < wanted) {
+      const button = addButton(kind); if (!button) break;
+      const before = current; button.click();
+      if (!await waitForFieldCount(kind, before)) break;
+      current = countRepeatedFields(kind);
+    }
+    return current;
+  }
+  function profileValue(key, facts, cursors) {
+    const educationKeys = { school: "school", degree: "degree", field_of_study: "field", graduation_year: "graduationYear" };
+    const workKeys = { employer: "company", job_title: "title" };
+    if (key in educationKeys) {
+      if (key === "school" && cursors.seenEducation) cursors.education++;
+      cursors.seenEducation = true; const entry = facts.education_entries?.[cursors.education] || {}; return entry[educationKeys[key]] || "";
+    }
+    if (key in workKeys) {
+      if (key === "employer" && cursors.seenWork) cursors.work++;
+      cursors.seenWork = true; const entry = facts.work_entries?.[cursors.work] || {}; return entry[workKeys[key]] || "";
+    }
+    return facts[key] || "";
+  }
   function setInputValue(element, value) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     setter ? setter.call(element, value) : element.value = value;
@@ -139,12 +179,18 @@
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
     panel.append(make("p", { class: "jac-note" }, "Recognized safe empty fields are filled automatically. Nothing is submitted automatically."));
     await addTracker(panel);
-    const fields = [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible);
+    const [educationFields, workFields] = await Promise.all([
+      expandRepeatedFields("education", response.facts.education_entries?.length || 1),
+      expandRepeatedFields("work", response.facts.work_entries?.length || 1)
+    ]);
+    if (educationFields < (response.facts.education_entries?.length || 1) || workFields < (response.facts.work_entries?.length || 1)) panel.append(make("p", { class: "jac-note" }, "Some additional education or work sections could not be added automatically; use the page's Add button, then run Review fields again."));
+    const fields = matchingFields();
     let count = 0;
+    const cursors = { education: 0, work: 0, seenEducation: false, seenWork: false };
     for (const [index, field] of fields.entries()) {
       const text = fieldText(field); if (!text || sensitive.test(text)) continue;
       if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) continue;
-      const key = match(text); const value = key ? response.facts[key] : "";
+      const key = match(text); const value = key ? profileValue(key, response.facts, cursors) : "";
       const isUnknownLongForm = !key && field instanceof HTMLTextAreaElement;
       if (!value && !isUnknownLongForm) continue;
       const id = `jac-${index}`; fieldMap.set(id, field); count++;

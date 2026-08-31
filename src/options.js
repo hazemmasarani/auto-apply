@@ -1,4 +1,4 @@
-import { EMPTY_PROFILE, mergeProfile } from "./profile.js";
+import { EMPTY_PROFILE, EMPTY_EDUCATION, EMPTY_WORK, mergeProfile } from "./profile.js";
 import { saveProfile, unlockProfile, hasProfile } from "./storage.js";
 import "./option-resolver.js";
 
@@ -11,8 +11,22 @@ function setAtPath(object, path, value) {
   parts.slice(0, -1).forEach(part => { target = target[part]; });
   target[parts.at(-1)] = value;
 }
-function showProfile(profile) { document.querySelectorAll("[data-path]").forEach(input => { input.value = getAtPath(profile, input.dataset.path) || ""; }); document.querySelector("#option-aliases").value = globalThis.JobOptionResolver.formatOptionAliases(profile.optionAliases); }
-function readProfile() { const profile = mergeProfile(EMPTY_PROFILE); document.querySelectorAll("[data-path]").forEach(input => setAtPath(profile, input.dataset.path, input.value.trim())); profile.optionAliases = globalThis.JobOptionResolver.parseOptionAliases(document.querySelector("#option-aliases").value); return profile; }
+function input(labelText, value, path, multiline = false) { const label = document.createElement("label"); label.textContent = labelText; const control = document.createElement(multiline ? "textarea" : "input"); control.dataset.entryPath = path; control.value = value || ""; if (multiline) control.rows = 4; label.append(control); return label; }
+function renderEntries(kind, entries) {
+  const container = document.querySelector(`#${kind}-entries`); container.replaceChildren();
+  entries.forEach((entry, index) => {
+    const card = document.createElement("article"); card.className = "repeat-entry";
+    const header = document.createElement("header"); const title = document.createElement("strong"); title.textContent = `${kind === "education" ? "Education" : "Work experience"} ${index + 1}`; header.append(title);
+    if (entries.length > 1) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary"; remove.textContent = "Remove"; remove.onclick = () => { const current = readEntries(kind, kind === "education" ? EMPTY_EDUCATION : EMPTY_WORK); current.splice(index, 1); renderEntries(kind, current); }; header.append(remove); }
+    card.append(header); const grid = document.createElement("div"); grid.className = "grid";
+    if (kind === "education") { grid.append(input("School", entry.school, "school"), input("Degree", entry.degree, "degree"), input("Field of study", entry.field, "field"), input("Graduation year", entry.graduationYear, "graduationYear")); }
+    else { grid.append(input("Company", entry.company, "company"), input("Title", entry.title, "title"), input("Start date", entry.startDate, "startDate"), input("End date", entry.endDate, "endDate"), input("Factual experience summary", entry.description, "description", true)); }
+    card.append(grid); container.append(card);
+  });
+}
+function readEntries(kind, template) { return [...document.querySelectorAll(`#${kind}-entries .repeat-entry`)].map(card => { const entry = structuredClone(template); card.querySelectorAll("[data-entry-path]").forEach(control => entry[control.dataset.entryPath] = control.value.trim()); return entry; }); }
+function showProfile(profile) { document.querySelectorAll("[data-path]").forEach(input => { input.value = getAtPath(profile, input.dataset.path) || ""; }); renderEntries("education", profile.education); renderEntries("work", profile.work); document.querySelector("#option-aliases").value = globalThis.JobOptionResolver.formatOptionAliases(profile.optionAliases); }
+function readProfile() { const profile = mergeProfile(EMPTY_PROFILE); document.querySelectorAll("[data-path]").forEach(input => setAtPath(profile, input.dataset.path, input.value.trim())); profile.education = readEntries("education", EMPTY_EDUCATION); profile.work = readEntries("work", EMPTY_WORK); profile.optionAliases = globalThis.JobOptionResolver.parseOptionAliases(document.querySelector("#option-aliases").value); return profile; }
 function message(text, good = false) { status.textContent = text; status.className = good ? "success" : ""; }
 const historyStatus = document.querySelector("#history-status");
 const history = document.querySelector("#application-history");
@@ -39,6 +53,8 @@ async function loadHistory() {
 }
 
 showProfile(EMPTY_PROFILE);
+document.querySelector("#add-education").addEventListener("click", () => { const entries = readEntries("education", EMPTY_EDUCATION); entries.push(structuredClone(EMPTY_EDUCATION)); renderEntries("education", entries); });
+document.querySelector("#add-work").addEventListener("click", () => { const entries = readEntries("work", EMPTY_WORK); entries.push(structuredClone(EMPTY_WORK)); renderEntries("work", entries); });
 document.querySelector("#unlock").addEventListener("click", async () => {
   try { showProfile(await unlockProfile(document.querySelector("#passphrase").value)); message("Profile unlocked. Edit it and save when ready.", true); await loadHistory(); }
   catch (error) { message(error.message); }

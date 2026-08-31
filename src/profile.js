@@ -1,10 +1,13 @@
+export const EMPTY_EDUCATION = { school: "", degree: "", field: "", graduationYear: "" };
+export const EMPTY_WORK = { company: "", title: "", startDate: "", endDate: "", description: "" };
+
 export const EMPTY_PROFILE = {
   contact: { firstName: "", lastName: "", email: "", phone: "", address: "", city: "", state: "", postalCode: "", country: "" },
   links: { linkedin: "", github: "", portfolio: "" },
   authorization: { authorized: "", sponsorship: "" },
   preferences: { locations: "", remote: "" },
-  education: [{ school: "", degree: "", field: "", graduationYear: "" }],
-  work: [{ company: "", title: "", startDate: "", endDate: "", description: "" }],
+  education: [structuredClone(EMPTY_EDUCATION)],
+  work: [structuredClone(EMPTY_WORK)],
   skills: "",
   optionAliases: [],
   standardAnswers: { whyInterested: "", salary: "", noticePeriod: "" },
@@ -21,8 +24,8 @@ export function mergeProfile(value = {}) {
     standardAnswers: { ...EMPTY_PROFILE.standardAnswers, ...value.standardAnswers },
     generator: { ...EMPTY_PROFILE.generator, ...value.generator },
     optionAliases: Array.isArray(value.optionAliases) ? value.optionAliases.filter(alias => alias && typeof alias.field === "string" && typeof alias.source === "string" && typeof alias.target === "string") : [],
-    education: value.education?.length ? value.education : structuredClone(EMPTY_PROFILE.education),
-    work: value.work?.length ? value.work : structuredClone(EMPTY_PROFILE.work)
+    education: value.education?.length ? value.education.map(entry => ({ ...EMPTY_EDUCATION, ...entry })) : structuredClone(EMPTY_PROFILE.education),
+    work: value.work?.length ? value.work.map(entry => ({ ...EMPTY_WORK, ...entry })) : structuredClone(EMPTY_PROFILE.work)
   };
 }
 
@@ -42,6 +45,8 @@ export function flattenedFacts(profile) {
     job_title: p.work[0]?.title || "", skills: p.skills,
     salary: p.standardAnswers.salary, notice_period: p.standardAnswers.noticePeriod,
     why_interested: p.standardAnswers.whyInterested,
-    option_aliases: p.optionAliases
+    option_aliases: p.optionAliases,
+    education_entries: p.education,
+    work_entries: p.work
   };
 }
