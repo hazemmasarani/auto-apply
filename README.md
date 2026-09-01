@@ -49,14 +49,22 @@ Browser sync has storage quotas, so it is appropriate for a personal
 job-application history, not an unlimited archive. It does not share data with
 a different browser account.
 
-## Answer generation
+## AI-assisted form filling
 
-In the profile editor, configure an OpenAI-compatible endpoint and model. The
-extension sends the current question, visible job description, and your factual
-profile to that endpoint. Generated text is always shown for review and is never
-inserted or submitted silently.
+In the profile editor, configure an OpenAI-compatible endpoint and model, and
+enter your public website in the Portfolio field. When you review an
+application, the extension fetches that portfolio, sends its text together with
+your full profile, the sanitized application-page HTML, and the permitted form
+field list to the configured endpoint. The model must return a field-ID/value
+JSON list; values for fields that were not explicitly requested are discarded.
 
-If no endpoint is configured, unknown questions remain blank for manual review.
+AI-provided values are used first, with saved profile values as a fallback. The
+extension does not send password/hidden inputs or allow AI filling of identity
+documents, financial data, demographic questions, attestations, signatures, or
+CAPTCHAs. It still never submits an application.
+
+If no endpoint or portfolio URL is configured, regular profile-based filling
+continues to work.
 
 ## Dropdown aliases
 

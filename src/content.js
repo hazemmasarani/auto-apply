@@ -35,6 +35,27 @@
     return Boolean(String(element.value || "").trim());
   }
   function matchingFields() { return [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible); }
+  function aiFieldId(field, index) { const id = `jac-ai-field-${index}`; field.setAttribute("data-jac-ai-id", id); return id; }
+  function fieldOptions(field) { return field instanceof HTMLSelectElement ? [...field.options].filter(option => !option.disabled).map(option => option.textContent.trim()).filter(Boolean).slice(0, 200) : []; }
+  function sanitizedFormHtml() {
+    const clone = document.documentElement.cloneNode(true);
+    clone.querySelectorAll("script, style, noscript, iframe, svg, canvas, input[type=password], input[type=hidden]").forEach(element => element.remove());
+    clone.querySelectorAll("input, textarea").forEach(element => { element.removeAttribute("value"); element.textContent = ""; });
+    clone.querySelectorAll("option").forEach(option => option.removeAttribute("selected"));
+    clone.querySelectorAll("[onclick], [onchange], [oninput]").forEach(element => { element.removeAttribute("onclick"); element.removeAttribute("onchange"); element.removeAttribute("oninput"); });
+    return clone.outerHTML.slice(0, 50000);
+  }
+  async function aiFieldValues(fields) {
+    const allowed = fields.flatMap((field, index) => {
+      const text = fieldText(field);
+      if (!text || sensitive.test(text) || (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type))) return [];
+      return [{ id: aiFieldId(field, index), label: text.slice(0, 300), type: field instanceof HTMLSelectElement ? "select" : field.tagName.toLowerCase(), options: fieldOptions(field) }];
+    });
+    if (!allowed.length) return new Map();
+    const result = await chrome.runtime.sendMessage({ type: "AI_FORM_FILL", fields: allowed, formHtml: sanitizedFormHtml() });
+    if (result.error) throw new Error(result.error);
+    return new Map((result.values || []).map(item => [item.id, item.value]));
+  }
   function countRepeatedFields(kind) {
     const startKey = kind === "education" ? "school" : "employer";
     return matchingFields().filter(field => match(fieldText(field)) === startKey).length;
@@ -185,12 +206,18 @@
     ]);
     if (educationFields < (response.facts.education_entries?.length || 1) || workFields < (response.facts.work_entries?.length || 1)) panel.append(make("p", { class: "jac-note" }, "Some additional education or work sections could not be added automatically; use the page's Add button, then run Review fields again."));
     const fields = matchingFields();
+    let aiValues = new Map();
+    try {
+      aiValues = await aiFieldValues(fields);
+      panel.append(make("p", { class: "jac-note" }, aiValues.size ? `AI prepared ${aiValues.size} field value${aiValues.size === 1 ? "" : "s"} from your profile and portfolio.` : "AI found no additional confident field values; profile values remain available."));
+    } catch (error) { panel.append(make("p", { class: "jac-note" }, `AI fill unavailable: ${error.message}`)); }
     let count = 0;
     const cursors = { education: 0, work: 0, seenEducation: false, seenWork: false };
     for (const [index, field] of fields.entries()) {
       const text = fieldText(field); if (!text || sensitive.test(text)) continue;
       if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) continue;
-      const key = match(text); const value = key ? profileValue(key, response.facts, cursors) : "";
+      const key = match(text); const fallbackValue = key ? profileValue(key, response.facts, cursors) : "";
+      const value = aiValues.get(field.getAttribute("data-jac-ai-id")) || fallbackValue;
       const isUnknownLongForm = !key && field instanceof HTMLTextAreaElement;
       if (!value && !isUnknownLongForm) continue;
       const id = `jac-${index}`; fieldMap.set(id, field); count++;
