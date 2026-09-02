@@ -37,6 +37,13 @@
   function matchingFields() { return [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible); }
   function aiFieldId(field, index) { const id = `jac-ai-field-${index}`; field.setAttribute("data-jac-ai-id", id); return id; }
   function fieldOptions(field) { return field instanceof HTMLSelectElement ? [...field.options].filter(option => !option.disabled).map(option => option.textContent.trim()).filter(Boolean).slice(0, 200) : []; }
+  function choiceQuestion(fields) { return fields[0]?.closest("fieldset")?.querySelector("legend")?.innerText?.trim() || fieldText(fields[0]); }
+  function choiceLabel(field) { return field.labels?.[0]?.innerText?.trim() || field.getAttribute("aria-label") || field.value || "Option"; }
+  function setChecked(field, checked) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")?.set;
+    setter ? setter.call(field, checked) : field.checked = checked;
+    field.dispatchEvent(new Event("input", { bubbles: true })); field.dispatchEvent(new Event("change", { bubbles: true }));
+  }
   function sanitizedFormHtml() {
     const clone = document.documentElement.cloneNode(true);
     clone.querySelectorAll("script, style, noscript, iframe, svg, canvas, input[type=password], input[type=hidden]").forEach(element => element.remove());
@@ -46,15 +53,37 @@
     return clone.outerHTML.slice(0, 50000);
   }
   async function aiFieldValues(fields) {
+    const choiceGroups = new Map();
     const allowed = fields.flatMap((field, index) => {
       const text = fieldText(field);
-      if (!text || sensitive.test(text) || (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type))) return [];
+      if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) {
+        const groupKey = `${field.type}:${field.name || index}`;
+        const group = choiceGroups.get(groupKey) || []; group.push(field); choiceGroups.set(groupKey, group); return [];
+      }
+      if (!text || sensitive.test(text)) return [];
       return [{ id: aiFieldId(field, index), label: text.slice(0, 300), type: field instanceof HTMLSelectElement ? "select" : field.tagName.toLowerCase(), options: fieldOptions(field) }];
     });
-    if (!allowed.length) return new Map();
+    const groups = [...choiceGroups.values()].map((fields, index) => {
+      const id = `jac-ai-choice-${index}`;
+      const options = fields.map((field, optionIndex) => { const optionId = `${id}-option-${optionIndex}`; field.setAttribute("data-jac-ai-choice-option", optionId); return { id: optionId, label: choiceLabel(field) }; });
+      return { id, fields, type: fields[0].type === "radio" ? "single_choice" : "multi_choice", label: choiceQuestion(fields).slice(0, 300), options };
+    }).filter(group => !sensitive.test(group.label) && !group.fields.some(field => sensitive.test(fieldText(field))));
+    allowed.push(...groups.map(group => ({ id: group.id, label: group.label, type: group.type, options: group.options })));
+    if (!allowed.length) return { values: new Map(), groups };
     const result = await chrome.runtime.sendMessage({ type: "AI_FORM_FILL", fields: allowed, formHtml: sanitizedFormHtml() });
     if (result.error) throw new Error(result.error);
-    return new Map((result.values || []).map(item => [item.id, item.value]));
+    return { values: new Map((result.values || []).map(item => [item.id, item.value])), groups };
+  }
+  function applyChoiceValues(groups, values) {
+    let filled = 0;
+    groups.forEach(group => {
+      if (group.fields.some(field => field.checked)) return;
+      const selected = values.get(group.id); const ids = Array.isArray(selected) ? selected : [selected];
+      const options = group.fields.filter(field => ids.includes(field.getAttribute("data-jac-ai-choice-option")));
+      const chosen = group.type === "single_choice" ? options.slice(0, 1) : options;
+      chosen.forEach(field => setChecked(field, true)); if (chosen.length) filled++;
+    });
+    return filled;
   }
   function countRepeatedFields(kind) {
     const startKey = kind === "education" ? "school" : "employer";
@@ -164,6 +193,35 @@
     };
   }
   function make(tag, attributes = {}, text = "") { const element = document.createElement(tag); Object.entries(attributes).forEach(([key, value]) => key === "class" ? element.className = value : element.setAttribute(key, value)); element.textContent = text; return element; }
+  function resumeFields() {
+    const fields = [...document.querySelectorAll("input[type=file]")].filter(field => !field.disabled);
+    const explicit = fields.filter(field => /\b(resume|curriculum\s+vitae|cv)\b/i.test(fieldText(field)));
+    if (explicit.length) return explicit;
+    const pdfFields = fields.filter(field => /pdf|application\/pdf/i.test(field.accept || ""));
+    return pdfFields.length === 1 ? pdfFields : [];
+  }
+  async function addResumePicker(panel) {
+    const fields = resumeFields();
+    const result = await chrome.runtime.sendMessage({ type: "GET_RESUMES" });
+    if (result.error || !result.resumes?.length) return;
+    const section = make("div", { class: "jac-resumes" }); section.append(make("strong", {}, "Resume"));
+    const select = make("select", { "aria-label": "Choose a resume" });
+    result.resumes.forEach(resume => select.append(make("option", { value: resume.id }, resume.name))); section.append(select);
+    const state = make("p", { class: "jac-resume-state" }, fields.length ? `${fields.length} resume upload field${fields.length === 1 ? "" : "s"} found.` : "No resume upload field was found on this page."); section.append(state);
+    const upload = make("button", { type: "button" }, "Use selected resume"); upload.disabled = !fields.length;
+    upload.onclick = async () => {
+      upload.disabled = true; state.textContent = "Loading resume…";
+      const fileResult = await chrome.runtime.sendMessage({ type: "GET_RESUME_FILE", id: select.value });
+      if (fileResult.error) { state.textContent = fileResult.error; upload.disabled = false; return; }
+      const file = new File([new Uint8Array(fileResult.bytes)], fileResult.fileName, { type: "application/pdf" }); let filled = 0;
+      for (const field of fields) {
+        try { const transfer = new DataTransfer(); transfer.items.add(file); field.files = transfer.files; field.dispatchEvent(new Event("input", { bubbles: true })); field.dispatchEvent(new Event("change", { bubbles: true })); filled++; }
+        catch { /* Some custom upload widgets require manual file selection. */ }
+      }
+      state.textContent = filled ? `${fileResult.fileName} added to ${filled} upload field${filled === 1 ? "" : "s"}.` : "This site requires the resume to be selected manually."; upload.disabled = false;
+    };
+    section.append(upload); panel.append(section);
+  }
   async function addTracker(panel) {
     const job = detectedJob();
     const section = make("div", { class: "jac-tracker" });
@@ -199,6 +257,7 @@
     const header = make("div", { class: "jac-header" }); header.append(make("strong", {}, "Application Copilot"));
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
     panel.append(make("p", { class: "jac-note" }, "Recognized safe empty fields are filled automatically. Nothing is submitted automatically."));
+    await addResumePicker(panel);
     await addTracker(panel);
     const [educationFields, workFields] = await Promise.all([
       expandRepeatedFields("education", response.facts.education_entries?.length || 1),
@@ -207,9 +266,12 @@
     if (educationFields < (response.facts.education_entries?.length || 1) || workFields < (response.facts.work_entries?.length || 1)) panel.append(make("p", { class: "jac-note" }, "Some additional education or work sections could not be added automatically; use the page's Add button, then run Review fields again."));
     const fields = matchingFields();
     let aiValues = new Map();
+    let aiChoiceGroups = [];
     try {
-      aiValues = await aiFieldValues(fields);
-      panel.append(make("p", { class: "jac-note" }, aiValues.size ? `AI prepared ${aiValues.size} field value${aiValues.size === 1 ? "" : "s"} from your profile and portfolio.` : "AI found no additional confident field values; profile values remain available."));
+      const ai = await aiFieldValues(fields); aiValues = ai.values; aiChoiceGroups = ai.groups;
+      const choicesFilled = applyChoiceValues(aiChoiceGroups, aiValues);
+      const prepared = aiValues.size - choicesFilled;
+      panel.append(make("p", { class: "jac-note" }, aiValues.size ? `AI prepared ${prepared} text field value${prepared === 1 ? "" : "s"} and selected ${choicesFilled} choice field${choicesFilled === 1 ? "" : "s"}.` : "AI found no additional confident field values; profile values remain available."));
     } catch (error) { panel.append(make("p", { class: "jac-note" }, `AI fill unavailable: ${error.message}`)); }
     let count = 0;
     const cursors = { education: 0, work: 0, seenEducation: false, seenWork: false };

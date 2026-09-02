@@ -17,6 +17,7 @@ answer legal/self-identification questions without review.
 - Option-aware dropdown matching for country/state aliases and saved custom aliases
 - A per-page review panel showing proposed values before they are filled
 - Automatic initial filling of recognized empty fields, with sidebar controls for edits
+- A packaged resume library with a picker for PDF upload fields
 - Optional OpenAI-compatible answer generation with a strict grounding prompt
 - Encrypted application tracker with draft, in-progress, and applied statuses
 - Duplicate detection based on the company, position title, and opening lines of the job description
@@ -29,6 +30,15 @@ answer legal/self-identification questions without review.
 3. Choose **Load unpacked** and select this repository.
 4. Open the extension, create a passphrase, and save your profile.
 5. On an application page, open the extension and choose **Review fields**.
+
+## Resume library
+
+PDF resumes live in the `resumes` directory. Each file that should appear in
+the application sidebar must also have an entry in `resumes/index.js`. After
+adding or changing a resume, reload the unpacked extension. On an application
+page, choose **Review fields**, select a resume, and click **Use selected
+resume**. The extension fills detected PDF upload controls but never submits
+the form.
 
 The passphrase is never stored. Your profile and optional API key are encrypted
 before being stored; unlocking lasts only for the current browser session.
@@ -58,10 +68,12 @@ your full profile, the sanitized application-page HTML, and the permitted form
 field list to the configured endpoint. The model must return a field-ID/value
 JSON list; values for fields that were not explicitly requested are discarded.
 
-AI-provided values are used first, with saved profile values as a fallback. The
-extension does not send password/hidden inputs or allow AI filling of identity
-documents, financial data, demographic questions, attestations, signatures, or
-CAPTCHAs. It still never submits an application.
+AI-provided values are used first, with saved profile values as a fallback.
+Dropdowns, radio groups, and safe multi-checkbox questions are sent with their
+question text and available choices, so the model can return the exact option
+ID to select. The extension does not send password/hidden inputs or allow AI
+filling of identity documents, financial data, demographic questions,
+attestations, signatures, or CAPTCHAs. It still never submits an application.
 
 If no endpoint or portfolio URL is configured, regular profile-based filling
 continues to work.
