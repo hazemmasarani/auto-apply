@@ -7,6 +7,7 @@ test("matches common application fields", () => {
   assert.equal(matchField("What is your LinkedIn profile?"), "linkedin");
   assert.equal(matchField("Will you now or in the future require visa sponsorship?"), "sponsorship");
   assert.equal(matchField("Highest degree earned"), "degree");
+  assert.equal(matchField("If you are currently enrolled in a university or program, what is your expected graduation date?"), "graduation_year");
 });
 test("does not guess an unknown question", () => assert.equal(matchField("Describe a difficult technical decision"), null));
 test("recognizes sensitive fields and attestations", () => {

@@ -27,7 +27,7 @@
     ["first_name", /\b(first|given)\s*name\b/i],["last_name", /\b(last|family|sur)\s*name\b/i],["full_name", /\b(full|legal)\s*name\b|^name$/i],
     ["email", /e-?mail/i],["phone", /phone|mobile/i],["linkedin", /linked\s*in/i],["github", /git\s*hub/i],["portfolio", /portfolio|personal\s*(site|website)/i],
     ["postal_code", /zip|postal/i],["address", /street|address\s*(line)?\s*1/i],["city", /\bcity\b/i],["state", /state|province|region/i],["country", /\bcountry\b/i],
-    ["degree", /degree|qualification/i],["school", /school|university|college|institution/i],["field_of_study", /field\s*of\s*study|major/i],["graduation_year", /graduat.*(year|date)/i],
+    ["degree", /degree|qualification/i],["graduation_year", /graduat.*(year|date)/i],["school", /school|university|college|institution/i],["field_of_study", /field\s*of\s*study|major/i],
     ["employer", /employer|company/i],["job_title", /job\s*title|position\s*title/i],["skills", /\bskills?\b|technologies/i],["work_authorization", /authori[sz].*(work|employment)|legally.*work/i],
     ["sponsorship", /sponsor|visa/i],["preferred_locations", /preferred.*location/i],["remote", /remote.*(work|preference)/i],["salary", /salary|compensation|pay\s*(range|expectation)/i],
     ["notice_period", /notice\s*period|start\s*date|availability/i],["why_interested", /why.*(interested|apply|company|role)|interest.*position/i]
@@ -52,12 +52,15 @@
   }
   function matchingFields() {
     const selector = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select, [role=combobox], [aria-haspopup=listbox]";
-    return queryAllDeep(selector).filter(element => !element.closest(`#${PANEL_ID}`) && visible(element));
+    const fields = queryAllDeep(selector).filter(element => !element.closest(`#${PANEL_ID}`) && visible(element));
+    return fields.filter(field => !isCustomDropdown(field) || !fields.some(other => other !== field && isCustomDropdown(other) && field.contains(other)));
   }
   function aiFieldId(field, index) { const id = `jac-ai-field-${index}`; field.setAttribute("data-jac-ai-id", id); return id; }
   function fieldOptions(field) {
-    if (field instanceof HTMLSelectElement) return [...field.options].filter(option => !option.disabled).map(option => option.textContent.trim()).filter(Boolean).slice(0, 200);
-    return customOptionCache.get(field)?.map(option => option.label).slice(0, 200) || [];
+    if (field instanceof HTMLSelectElement) return [...field.options]
+      .map((option, index) => ({ id: option.value, label: option.textContent.trim(), placeholder: isPlaceholderOption({ value: option.value, label: option.textContent, disabled: option.disabled }, index) }))
+      .filter(option => !option.placeholder && option.id && option.label).slice(0, 200).map(({ id, label }) => ({ id, label }));
+    return customOptionCache.get(field)?.filter(option => !option.disabled).map(option => ({ id: option.value, label: option.label })).slice(0, 200) || [];
   }
   function choiceQuestion(fields) { return fields[0]?.closest("fieldset")?.querySelector("legend")?.innerText?.trim() || fieldText(fields[0]); }
   function choiceLabel(field) { return field.labels?.[0]?.innerText?.trim() || field.getAttribute("aria-label") || field.value || "Option"; }
@@ -175,21 +178,46 @@
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded", "style", "class"] });
     });
   }
-  function activateSuggestion(option) {
-    const eventNames = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
-    eventNames.forEach(type => option.element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })));
+  function displayedDropdownValue(field) {
+    return field instanceof HTMLInputElement ? field.value : field.getAttribute("data-value") || field.innerText || field.textContent || "";
+  }
+  function selectionConfirmed(field, option) {
+    if (option.element.getAttribute("aria-selected") === "true") return true;
+    const chosen = normalize(option.label).toLowerCase(), displayed = normalize(displayedDropdownValue(field)).toLowerCase();
+    return Boolean(chosen && displayed && (displayed.includes(chosen) || chosen.includes(displayed)));
+  }
+  async function activateSuggestion(field, option) {
+    option.element.scrollIntoView({ block: "nearest" }); option.element.focus();
+    if (globalThis.PointerEvent) option.element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "mouse" }));
+    option.element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    option.element.click();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    if (!selectionConfirmed(field, option)) {
+      option.element.focus();
+      option.element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+      option.element.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+      option.element.click();
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+    return selectionConfirmed(field, option);
   }
   function openDropdown(field) {
     field.focus();
     ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type => field.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })));
     if (field.getAttribute("aria-expanded") !== "true") field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
   }
+  function closeDropdown(field) {
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    field.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    field.blur();
+    if (field.getAttribute("aria-expanded") === "true") field.click();
+  }
   async function prepareCustomOptions(fields) {
     for (const field of fields.filter(isCustomDropdown)) {
       openDropdown(field);
       const options = await waitForSuggestions(field, 600);
       if (options.length) customOptionCache.set(field, options);
-      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+      closeDropdown(field);
     }
   }
   async function applyValue(field, key, value, aliases) {
@@ -207,8 +235,9 @@
     }
     const result = resolveSelectOptions({ field: key, value, options, aliases });
     if (!result.selected) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result }; }
-    activateSuggestion(result.selected);
-    return { filled: true, result };
+    const filled = await activateSuggestion(field, result.selected);
+    if (!filled) closeDropdown(field);
+    return { filled, result };
   }
   function pageContext() {
     const selectors = ["[class*=description]", "[id*=description]", "main", "article"];
