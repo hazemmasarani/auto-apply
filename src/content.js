@@ -1,14 +1,26 @@
 (() => {
   const PANEL_ID = "job-copilot-panel";
   const fieldMap = new Map();
-  const { resolveSelectOptions, shouldAutoFill } = globalThis.JobOptionResolver;
+  const customOptionCache = new WeakMap();
+  const { resolveSelectOptions, shouldAutoFill, isPlaceholderOption } = globalThis.JobOptionResolver;
 
-  function visible(element) { const style = getComputedStyle(element); const box = element.getBoundingClientRect(); return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0 && !element.disabled && !element.readOnly; }
+  function isCustomDropdown(element) { return !(element instanceof HTMLSelectElement) && (element.getAttribute("role") === "combobox" || /listbox/i.test(element.getAttribute("aria-haspopup") || "")); }
+  function visible(element) { const style = getComputedStyle(element); const box = element.getBoundingClientRect(); return style.display !== "none" && style.visibility !== "hidden" && box.width > 0 && box.height > 0 && !element.disabled && (!element.readOnly || isCustomDropdown(element)); }
+  function openRoots(root = document) {
+    const roots = [root];
+    for (let index = 0; index < roots.length; index++) roots[index].querySelectorAll("*").forEach(element => { if (element.shadowRoot) roots.push(element.shadowRoot); });
+    return roots;
+  }
+  function queryAllDeep(selector) { return [...new Set(openRoots().flatMap(root => [...root.querySelectorAll(selector)]))]; }
+  function byIdDeep(id) { return openRoots().map(root => root.getElementById?.(id) || root.querySelector?.(`#${CSS.escape(id)}`)).find(Boolean); }
   function fieldText(element) {
     const labels = element.labels ? [...element.labels].map(label => label.innerText) : [];
+    const wrappingLabel = element.closest("label")?.innerText;
+    const associatedLabel = element.id ? element.getRootNode().querySelector?.(`label[for="${CSS.escape(element.id)}"]`)?.innerText : "";
+    const displayedText = isCustomDropdown(element) ? element.innerText || element.textContent : "";
     const ariaId = element.getAttribute("aria-labelledby");
-    const ariaText = ariaId ? ariaId.split(/\s+/).map(id => document.getElementById(id)?.innerText || "").join(" ") : "";
-    return [element.name, element.id, element.placeholder, element.getAttribute("aria-label"), ariaText, ...labels].filter(Boolean).join(" ");
+    const ariaText = ariaId ? ariaId.split(/\s+/).map(id => byIdDeep(id)?.innerText || "").join(" ") : "";
+    return [element.name, element.id, element.placeholder, element.getAttribute("aria-label"), ariaText, associatedLabel, wrappingLabel, displayedText, ...labels].filter(Boolean).join(" ");
   }
   function normalize(text) { return String(text || "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim(); }
   const rules = [
@@ -31,12 +43,22 @@
   function selectValue(element, value) { const option = [...element.options].find(item => item.value === value); if (!option) return false; setNativeValue(element, option.value); return true; }
   function selectOptions(element) { return [...element.options].map(option => ({ value: option.value, label: option.textContent.trim(), disabled: option.disabled })); }
   function hasExistingValue(element) {
-    if (element instanceof HTMLSelectElement) return Boolean(element.value) && !element.selectedOptions[0]?.disabled;
+    if (element instanceof HTMLSelectElement) return !isPlaceholderOption({ value: element.value, label: element.selectedOptions[0]?.textContent, disabled: element.selectedOptions[0]?.disabled }, element.selectedIndex);
+    if (isCustomDropdown(element)) {
+      const value = element instanceof HTMLInputElement ? element.value : element.getAttribute("data-value") || element.textContent;
+      return Boolean(String(value || "").trim()) && !/^(select|choose|pick)( an?| one| option| value)?/i.test(String(value).trim());
+    }
     return Boolean(String(element.value || "").trim());
   }
-  function matchingFields() { return [...document.querySelectorAll("input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select")].filter(visible); }
+  function matchingFields() {
+    const selector = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select, [role=combobox], [aria-haspopup=listbox]";
+    return queryAllDeep(selector).filter(element => !element.closest(`#${PANEL_ID}`) && visible(element));
+  }
   function aiFieldId(field, index) { const id = `jac-ai-field-${index}`; field.setAttribute("data-jac-ai-id", id); return id; }
-  function fieldOptions(field) { return field instanceof HTMLSelectElement ? [...field.options].filter(option => !option.disabled).map(option => option.textContent.trim()).filter(Boolean).slice(0, 200) : []; }
+  function fieldOptions(field) {
+    if (field instanceof HTMLSelectElement) return [...field.options].filter(option => !option.disabled).map(option => option.textContent.trim()).filter(Boolean).slice(0, 200);
+    return customOptionCache.get(field)?.map(option => option.label).slice(0, 200) || [];
+  }
   function choiceQuestion(fields) { return fields[0]?.closest("fieldset")?.querySelector("legend")?.innerText?.trim() || fieldText(fields[0]); }
   function choiceLabel(field) { return field.labels?.[0]?.innerText?.trim() || field.getAttribute("aria-label") || field.value || "Option"; }
   function setChecked(field, checked) {
@@ -61,7 +83,7 @@
         const group = choiceGroups.get(groupKey) || []; group.push(field); choiceGroups.set(groupKey, group); return [];
       }
       if (!text || sensitive.test(text)) return [];
-      return [{ id: aiFieldId(field, index), label: text.slice(0, 300), type: field instanceof HTMLSelectElement ? "select" : field.tagName.toLowerCase(), options: fieldOptions(field) }];
+      return [{ id: aiFieldId(field, index), label: text.slice(0, 300), type: field instanceof HTMLSelectElement || isCustomDropdown(field) ? "select" : field.tagName.toLowerCase(), options: fieldOptions(field) }];
     });
     const groups = [...choiceGroups.values()].map((fields, index) => {
       const id = `jac-ai-choice-${index}`;
@@ -134,8 +156,8 @@
   }
   function suggestionElements(field) {
     const ids = [field.getAttribute("aria-controls"), field.getAttribute("aria-owns")].filter(Boolean).flatMap(value => value.split(/\s+/));
-    const linked = ids.map(id => document.getElementById(id)).filter(Boolean);
-    const roots = linked.length ? linked : [...document.querySelectorAll("[role=listbox], [role=menu]")];
+    const linked = ids.map(id => byIdDeep(id)).filter(Boolean);
+    const roots = linked.length ? linked : queryAllDeep("[role=listbox], [role=menu]");
     const elements = roots.flatMap(root => [...root.querySelectorAll("[role=option], [role=menuitem], li")]);
     return elements.filter(element => !element.closest(`#${PANEL_ID}`) && visible(element) && (element.innerText || element.textContent).trim());
   }
@@ -157,16 +179,32 @@
     const eventNames = ["pointerdown", "mousedown", "pointerup", "mouseup", "click"];
     eventNames.forEach(type => option.element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })));
   }
+  function openDropdown(field) {
+    field.focus();
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(type => field.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window })));
+    if (field.getAttribute("aria-expanded") !== "true") field.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
+  }
+  async function prepareCustomOptions(fields) {
+    for (const field of fields.filter(isCustomDropdown)) {
+      openDropdown(field);
+      const options = await waitForSuggestions(field, 600);
+      if (options.length) customOptionCache.set(field, options);
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    }
+  }
   async function applyValue(field, key, value, aliases) {
     if (field instanceof HTMLSelectElement) {
       const result = resolveSelectOptions({ field: key, value, options: selectOptions(field), aliases });
       return { filled: Boolean(result.selected && selectValue(field, result.selected.value)), result };
     }
-    if (!(field instanceof HTMLInputElement) || !autocompleteEnabled(field, key)) { setNativeValue(field, value); return { filled: true, result: null }; }
-    field.focus();
-    setInputValue(field, value);
+    if (!isCustomDropdown(field) && (!(field instanceof HTMLInputElement) || !autocompleteEnabled(field, key))) { setNativeValue(field, value); return { filled: true, result: null }; }
+    openDropdown(field);
+    if (field instanceof HTMLInputElement && !field.readOnly) setInputValue(field, value);
     const options = await waitForSuggestions(field);
-    if (!options.length) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result: null }; }
+    if (!options.length) {
+      if (field instanceof HTMLInputElement && !field.readOnly) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result: null }; }
+      return { filled: false, result: null };
+    }
     const result = resolveSelectOptions({ field: key, value, options, aliases });
     if (!result.selected) { field.dispatchEvent(new Event("change", { bubbles: true })); return { filled: true, result }; }
     activateSuggestion(result.selected);
@@ -272,7 +310,7 @@
   async function scan() {
     document.getElementById(PANEL_ID)?.remove(); fieldMap.clear();
     const response = await chrome.runtime.sendMessage({ type: "GET_FACTS" });
-    if (response.error) return alert(response.error);
+    if (response.error) { if (window === window.top) alert(response.error); return; }
     const panel = make("aside", { id: PANEL_ID });
     const header = make("div", { class: "jac-header" }); header.append(make("strong", {}, "Application Copilot"));
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
@@ -286,6 +324,7 @@
     ]);
     if (educationFields < (response.facts.education_entries?.length || 1) || workFields < (response.facts.work_entries?.length || 1)) panel.append(make("p", { class: "jac-note" }, "Some additional education or work sections could not be added automatically; use the page's Add button, then run Review fields again."));
     const fields = matchingFields();
+    await prepareCustomOptions(fields);
     let aiValues = new Map();
     let aiChoiceGroups = [];
     try {
@@ -344,7 +383,7 @@
       }; row.append(fill); panel.append(row);
     }
     if (!count) panel.append(make("p", {}, "No safe, recognized fields were found on this page."));
-    document.documentElement.append(panel);
+    if (window === window.top) document.documentElement.append(panel);
   }
   chrome.runtime.onMessage.addListener(message => { if (message.type === "SCAN") scan(); });
 })();

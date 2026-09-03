@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import "../src/option-resolver.js";
 
-const { parseOptionAliases, resolveSelectOptions, shouldAutoFill, rankedOptions } = globalThis.JobOptionResolver;
+const { parseOptionAliases, resolveSelectOptions, shouldAutoFill, isPlaceholderOption, rankedOptions } = globalThis.JobOptionResolver;
 const countries = [
   { value: "", label: "Select a country", disabled: false },
   { value: "US", label: "+1 United States", disabled: false },
@@ -66,6 +66,12 @@ test("only auto-fills saved values into empty, unprotected fields", () => {
   assert.equal(shouldAutoFill({ value: "Ada", hasExistingValue: true }), false);
   assert.equal(shouldAutoFill({ value: "", hasExistingValue: false }), false);
   assert.equal(shouldAutoFill({ value: "Ada", hasExistingValue: false, isProtected: true }), false);
+});
+
+test("recognizes nonempty first options that are placeholders", () => {
+  assert.equal(isPlaceholderOption({ value: "prompt", label: "Please select" }, 0), true);
+  assert.equal(isPlaceholderOption({ value: "US", label: "United States" }, 0), false);
+  assert.equal(isPlaceholderOption({ value: "CA", label: "California" }, 2), false);
 });
 
 test("validates duplicate and malformed aliases", () => {

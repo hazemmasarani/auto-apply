@@ -40,6 +40,12 @@
     return options.map((option, index) => ({ option, index, score: optionScore(option, value) + bonus })).filter(match => match.score > bonus).sort((a, b) => b.score - a.score || a.index - b.index).map(match => match.option);
   }
   function shouldAutoFill({ value, hasExistingValue, isProtected = false }) { return Boolean(String(value || "").trim()) && !hasExistingValue && !isProtected; }
+  function isPlaceholderOption(option, index = 0) {
+    if (!option) return true;
+    const value = normalizeOptionText(option.value), label = normalizeOptionText(option.label ?? option.textContent);
+    if (option.disabled || !value) return true;
+    return index === 0 && (/^(please )?(select|choose|pick)\b/.test(label) || /^(none|not selected)$/.test(label));
+  }
 
   function resolveSelectOptions({ field, value, options, aliases = [] }) {
     const available = options.filter(option => !option.disabled && String(option.value || "").trim());
@@ -82,5 +88,5 @@
   }
   function formatOptionAliases(aliases = []) { return aliases.map(alias => `${alias.field} | ${alias.source} | ${alias.target}`).join("\n"); }
 
-  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions, shouldAutoFill, rankedOptions };
+  globalThis.JobOptionResolver = { normalizeOptionText, parseOptionAliases, formatOptionAliases, resolveSelectOptions, shouldAutoFill, isPlaceholderOption, rankedOptions };
 })();
