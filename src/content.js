@@ -200,6 +200,26 @@
     const pdfFields = fields.filter(field => /pdf|application\/pdf/i.test(field.accept || ""));
     return pdfFields.length === 1 ? pdfFields : [];
   }
+  function coverLetterFields() {
+    return [...document.querySelectorAll("input[type=file], textarea")].filter(field => !field.disabled && !hasExistingValue(field) && /\bcover[\s_-]*letter\b/i.test(fieldText(field)));
+  }
+  async function addCoverLetter(panel, job) {
+    const fields = coverLetterFields();
+    if (!fields.length) return;
+    const section = make("div", { class: "jac-cover-letter" }); section.append(make("strong", {}, "Cover letter"));
+    const state = make("p", { class: "jac-cover-letter-state" }, "Generating a cover letter…"); section.append(state); panel.append(section);
+    const result = await chrome.runtime.sendMessage({ type: "GENERATE_COVER_LETTER", job });
+    if (result.error) { state.textContent = result.error; return; }
+    const file = new File([result.document], "Cover Letter.doc", { type: "application/msword" }); let filled = 0;
+    for (const field of fields) {
+      try {
+        if (field instanceof HTMLTextAreaElement) setNativeValue(field, result.letter);
+        else { const transfer = new DataTransfer(); transfer.items.add(file); field.files = transfer.files; field.dispatchEvent(new Event("input", { bubbles: true })); field.dispatchEvent(new Event("change", { bubbles: true })); }
+        filled++;
+      } catch { /* Leave protected custom widgets for manual upload. */ }
+    }
+    state.textContent = `Created ${result.fileName} and filled ${filled} cover-letter field${filled === 1 ? "" : "s"}.`;
+  }
   async function addResumePicker(panel) {
     const fields = resumeFields();
     const result = await chrome.runtime.sendMessage({ type: "GET_RESUMES" });
@@ -257,6 +277,7 @@
     const header = make("div", { class: "jac-header" }); header.append(make("strong", {}, "Application Copilot"));
     const close = make("button", { type: "button", title: "Close" }, "×"); close.onclick = () => panel.remove(); header.append(close); panel.append(header);
     panel.append(make("p", { class: "jac-note" }, "Recognized safe empty fields are filled automatically. Nothing is submitted automatically."));
+    await addCoverLetter(panel, detectedJob());
     await addResumePicker(panel);
     await addTracker(panel);
     const [educationFields, workFields] = await Promise.all([

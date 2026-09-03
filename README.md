@@ -18,6 +18,7 @@ answer legal/self-identification questions without review.
 - A per-page review panel showing proposed values before they are filled
 - Automatic initial filling of recognized empty fields, with sidebar controls for edits
 - A packaged resume library with a picker for PDF upload fields
+- Automatic grounded cover-letter generation and Word-document downloads
 - Optional OpenAI-compatible answer generation with a strict grounding prompt
 - Encrypted application tracker with draft, in-progress, and applied statuses
 - Duplicate detection based on the company, position title, and opening lines of the job description
@@ -39,6 +40,15 @@ adding or changing a resume, reload the unpacked extension. On an application
 page, choose **Review fields**, select a resume, and click **Use selected
 resume**. The extension fills detected PDF upload controls but never submits
 the form.
+
+## Cover letters
+
+When **Review fields** detects a cover-letter upload or text area, the extension
+uses the configured OpenAI-compatible endpoint to create a letter grounded in
+the saved profile, portfolio, and current job description. It fills the page
+field and downloads a Word-compatible document to
+`Downloads/cover letters/<company> - <position>/Cover Letter.doc`. Browser
+extensions cannot write directly into this source repository at runtime.
 
 The passphrase is never stored. Your profile and optional API key are encrypted
 before being stored; unlocking lasts only for the current browser session.

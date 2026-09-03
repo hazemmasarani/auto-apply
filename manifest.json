@@ -3,7 +3,7 @@
   "name": "Job Application Copilot",
   "version": "0.1.0",
   "description": "Review and fill job applications from an encrypted local profile.",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "src/background.js", "type": "module" },
   "action": { "default_popup": "src/popup.html", "default_title": "Application Copilot" },
